@@ -123,19 +123,22 @@ fn is_valid_filename(file_name: &OsStr) -> bool {
 }
 
 #[cfg(any(windows, test))]
-const RESERVED_NAMES: [&str; 22] = [
+const RESERVED_NAMES: [&str; 28] = [
     "AUX", "NUL", "PRN", "CON", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    "COM9", "COM¹", "COM²", "COM³", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7",
+    "LPT8", "LPT9", "LPT¹", "LPT²", "LPT³",
 ];
 
 #[cfg(any(windows, test))]
 fn is_reserved<P: AsRef<OsStr>>(file_name: P) -> bool {
     // con.txt is reserved too
-    // all reserved DOS names have ASCII-compatible stem
-    if let Some(name) = Path::new(&file_name).file_stem().and_then(|s| s.to_str()) {
-        // "con.. .txt" is "CON" for DOS
-        let trimmed = right_trim(name);
-        if trimmed.len() <= 4 && RESERVED_NAMES.into_iter().any(|name| trimmed.eq_ignore_ascii_case(name)) {
+    // COM/LPT names may end in the ISO/IEC 8859-1 superscript digits ¹, ², or ³.
+    if let Some(name) = Path::new(&file_name).file_name().and_then(|s| s.to_str()) {
+        // The device name ends at the first dot, even with multiple extensions.
+        // "con.. .txt" and "con.tar.gz" are both "CON" for DOS.
+        let stem = name.split('.').next().unwrap_or(name);
+        let trimmed = right_trim(stem);
+        if RESERVED_NAMES.into_iter().any(|name| trimmed.eq_ignore_ascii_case(name)) {
             return true;
         }
     }
@@ -302,4 +305,56 @@ fn safe() {
     assert!(!is_safe_to_strip_unc(Path::new(r"\\?\c:foo")));
     assert!(!is_safe_to_strip_unc(Path::new(r"\\?\cc:foo")));
     assert!(!is_safe_to_strip_unc(Path::new(r"\\?\c:foo\bar")));
+}
+
+#[test]
+fn superscript_device_names_are_reserved() {
+    // Windows recognizes these ISO/IEC 8859-1 superscripts as COM/LPT device digits.
+    for name in ["COM¹", "COM²", "COM³", "LPT¹", "LPT²", "LPT³"] {
+        for spelling in [name.to_string(), name.to_ascii_lowercase()] {
+            for suffix in ["", ".txt", ".tar.gz", " .txt", ".", " "] {
+                let file_name = format!("{}{}", spelling, suffix);
+                assert!(is_reserved(&file_name), "must reserve {}", file_name);
+            }
+        }
+    }
+    for name in [
+        "COM⁴", "LPT⁴", "COM₁", "LPT₁", "COM¹x", "xCOM¹", " COM¹", "LPT³x",
+        "NULx.tar.gz", ".NUL.tar.gz", "file.NUL.tar.gz",
+    ] {
+        assert!(!is_reserved(name), "must not reserve {}", name);
+    }
+}
+
+#[test]
+fn multiple_extensions_do_not_hide_device_names() {
+    for name in ["NUL.tar.gz", "NUL .tar.gz", "CON.foo.bar", "AUX .txt.gz", "COM1.tar.gz"] {
+        assert!(is_reserved(name), "must reserve {}", name);
+    }
+    for name in ["NULx.tar.gz", ".NUL.tar.gz", "file.NUL.tar.gz"] {
+        assert!(!is_reserved(name), "must not reserve {}", name);
+    }
+}
+
+#[test]
+#[cfg(windows)]
+fn superscript_device_paths_keep_the_verbatim_prefix() {
+    for name in ["COM¹", "COM²", "COM³", "LPT¹", "LPT²", "LPT³", "NUL"] {
+        for spelling in [name.to_string(), name.to_ascii_lowercase()] {
+            for path in [
+                format!(r"\\?\C:\scratch\{}", spelling),
+                format!(r"\\?\C:\scratch\{}.txt", spelling),
+                format!(r"\\?\C:\scratch\{}.tar.gz", spelling),
+                format!(r"\\?\C:\{}\scratch.txt", spelling),
+            ] {
+                let path = Path::new(&path);
+                assert!(!is_safe_to_strip_unc(path), "must keep {:?}", path);
+                assert_eq!(path, simplified(path));
+            }
+        }
+    }
+    assert_eq!(
+        Path::new(r"C:\scratch\COM⁴.txt"),
+        simplified(Path::new(r"\\?\C:\scratch\COM⁴.txt"))
+    );
 }
