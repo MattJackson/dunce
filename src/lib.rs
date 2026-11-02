@@ -123,8 +123,9 @@ fn is_valid_filename(file_name: &OsStr) -> bool {
 }
 
 #[cfg(any(windows, test))]
-const RESERVED_NAMES: [&str; 28] = [
-    "AUX", "NUL", "PRN", "CON", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+const RESERVED_NAMES: [&str; 30] = [
+    "AUX", "NUL", "PRN", "CON", "CONIN$", "CONOUT$", "COM1", "COM2", "COM3", "COM4",
+    "COM5", "COM6", "COM7", "COM8",
     "COM9", "COM¹", "COM²", "COM³", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7",
     "LPT8", "LPT9", "LPT¹", "LPT²", "LPT³",
 ];
@@ -339,7 +340,9 @@ fn multiple_extensions_do_not_hide_device_names() {
 #[test]
 #[cfg(windows)]
 fn superscript_device_paths_keep_the_verbatim_prefix() {
-    for name in ["COM¹", "COM²", "COM³", "LPT¹", "LPT²", "LPT³", "NUL"] {
+    for name in [
+        "COM¹", "COM²", "COM³", "LPT¹", "LPT²", "LPT³", "NUL", "CONIN$", "CONOUT$",
+    ] {
         for spelling in [name.to_string(), name.to_ascii_lowercase()] {
             for path in [
                 format!(r"\\?\C:\scratch\{}", spelling),
@@ -357,4 +360,14 @@ fn superscript_device_paths_keep_the_verbatim_prefix() {
         Path::new(r"C:\scratch\COM⁴.txt"),
         simplified(Path::new(r"\\?\C:\scratch\COM⁴.txt"))
     );
+}
+
+#[test]
+fn console_device_names_are_reserved() {
+    for name in ["CONIN$", "CONOUT$", "conin$", "conout$"] {
+        assert!(is_reserved(name), "must reserve {}", name);
+    }
+    for name in ["CONIN", "CONOUT", "CONIN$x", "xCONOUT$", " CONIN$", ".CONOUT$"] {
+        assert!(!is_reserved(name), "must not reserve {}", name);
+    }
 }
