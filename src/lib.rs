@@ -128,19 +128,21 @@ fn is_valid_filename(file_name: &OsStr) -> bool {
 }
 
 #[cfg(any(windows, test))]
-const RESERVED_NAMES: [&str; 22] = [
-    "AUX", "NUL", "PRN", "CON", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+const RESERVED_NAMES: [&str; 30] = [
+    "AUX", "NUL", "PRN", "CON", "CONIN$", "CONOUT$", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6",
+    "COM7", "COM8", "COM9", "COM¹", "COM²", "COM³", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6",
+    "LPT7", "LPT8", "LPT9", "LPT¹", "LPT²", "LPT³",
 ];
 
 #[cfg(any(windows, test))]
 fn is_reserved<P: AsRef<OsStr>>(file_name: P) -> bool {
     // con.txt is reserved too
-    // all reserved DOS names have ASCII-compatible stem
+    // COM and LPT also take the superscript digits ¹ ² ³, so not every name is ASCII
     if let Some(name) = Path::new(&file_name).file_stem().and_then(|s| s.to_str()?.split('.').next()) {
         // "con.. .txt" is "CON" for DOS
         let trimmed = name.trim_end_matches(' ');
-        return trimmed.len() <= 4 && RESERVED_NAMES.into_iter().any(|name| trimmed.eq_ignore_ascii_case(name));
+        // the longest name, "CONOUT$", is 7 bytes
+        return trimmed.len() <= 7 && RESERVED_NAMES.into_iter().any(|name| trimmed.eq_ignore_ascii_case(name));
     }
     false
 }
@@ -209,6 +211,41 @@ fn reserved() {
     assert!(!is_reserved("@CON"));
     assert!(!is_reserved("not.CON"));
     assert!(!is_reserved("CON。"));
+}
+
+#[test]
+fn reserved_superscript_and_console_names() {
+    // https://learn.microsoft.com/windows/win32/fileio/naming-a-file
+    for name in ["COM¹", "COM²", "COM³", "LPT¹", "LPT²", "LPT³", "CONIN$", "CONOUT$"] {
+        for spelling in [name.to_string(), name.to_ascii_lowercase()] {
+            for suffix in ["", ".txt", ".tar.gz", " .txt", ".", " "] {
+                let file_name = format!("{}{}", spelling, suffix);
+                assert!(is_reserved(&file_name), "{}", file_name);
+            }
+        }
+    }
+
+    assert!(!is_reserved("COM⁴"));
+    assert!(!is_reserved("COM₁"));
+    assert!(!is_reserved("COM¹x"));
+    assert!(!is_reserved(" COM¹"));
+    assert!(!is_reserved("CONIN"));
+    assert!(!is_reserved("CONOUT"));
+    assert!(!is_reserved("CONIN$x"));
+    assert!(!is_reserved(".CONOUT$"));
+    assert!(!is_reserved("not.CONIN$"));
+}
+
+#[test]
+#[cfg(windows)]
+fn superscript_and_console_paths_keep_the_verbatim_prefix() {
+    for name in ["COM¹", "LPT³", "CONIN$", "conout$"] {
+        for path in [format!(r"\\?\C:\scratch\{}", name), format!(r"\\?\C:\scratch\{}.txt", name)] {
+            let path = Path::new(&path);
+            assert_eq!(path, simplified(path));
+        }
+    }
+    assert_eq!(Path::new(r"C:\scratch\COM⁴.txt"), simplified(Path::new(r"\\?\C:\scratch\COM⁴.txt")));
 }
 
 #[test]
